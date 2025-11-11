@@ -75,7 +75,7 @@ def buscar_produtos(termo, limite=10, salvar_csv=False):
 if __name__ == "__main__":
     termo = input("Digite o produto para buscar: ")
     limite = int(input("Digite o limite de produtos (padrão 10): ") or 10)
-    resultado = buscar_produtos(termo, limite=limite,)
+    resultado = buscar_produtos(termo, limite=limite, salvar_csv=salvar)
     if not resultado.empty:
         print(resultado)
     else:
