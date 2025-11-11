@@ -1,27 +1,82 @@
-import streamlit as st
+import requests
+from bs4 import BeautifulSoup
 import pandas as pd
-from scraping import buscar_produtos
+import re
+from urllib.parse import urljoin
+import time  # Para adicionar delay
 
-st.set_page_config(page_title="Scraping Mercado Livre", layout="wide")
+def buscar_produtos(termo, limite=10, salvar_csv=False):
+    termo_formatado = termo.replace(" ", "-")
+    url = f"https://lista.mercadolivre.com.br/{termo_formatado}"
 
-st.title("🔎 Buscador de Produtos - Mercado Livre")
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()  # Levanta erro se status não for 200
+    except requests.RequestException as e:
+        print(f"Erro na requisição: {e}")
+        return pd.DataFrame()  # Retorna DataFrame vazio em caso de erro
 
-with st.form("busca_form"):
-    termo = st.text_input("Digite o produto para buscar:", "")
-    limite = st.number_input("Limite de produtos", min_value=1, max_value=50, value=10)
-    buscar = st.form_submit_button("Buscar")
+    soup = BeautifulSoup(response.text, "html.parser")
 
-if buscar and termo:
-    with st.spinner("Buscando produtos..."):
-        resultado = buscar_produtos(termo, limite)
+    produtos_html = soup.select("div.ui-search-result__wrapper")[:limite]
+
+    produtos = []
+    for p in produtos_html:
+        try:
+            # Tenta pegar o nome do produto
+            nome_tag = p.select_one("h2.ui-search-item__title") or p.select_one("h3.poly-component__title") or p.select_one("a.poly-component__title")
+            preco_tag = p.select_one("span.andes-money-amount__fraction")
+            centavos_tag = p.select_one("span.andes-money-amount__cents")  # Para centavos
+            link_tag = p.select_one("a.ui-search-link") or p.find("a", href=True)
+
+            nome = nome_tag.get_text(strip=True) if nome_tag else "N/A"
+            
+            # Preço completo (inteiro + centavos)
+            preco_inteiro = preco_tag.get_text(strip=True) if preco_tag else "0"
+            centavos = centavos_tag.get_text(strip=True) if centavos_tag else "00"
+            preco = f"{preco_inteiro},{centavos}" if preco_inteiro != "0" else "N/A"
+            
+             # Link absoluto e completo
+            link_relativo = link_tag["href"] if link_tag else ""
+            link = urljoin(url, link_relativo) if link_relativo else "N/A"
+            # Logging temporário para depurar (remova depois)
+            print(f"Link extraído: {link_relativo} -> {link}")
+            # Verifica se é um link válido do Mercado Livre (não truncado)
+            if not link.startswith("https://www.mercadolivre.com.br") or len(link) < 50:  # Links válidos são longos
+                link = "N/A"
+
+            produtos.append({
+                "Nome": nome,
+                "Preço": preco,
+                "Link": link
+            })
+        except Exception as e:
+            print(f"Erro ao extrair produto: {e}")
+            continue  # Pula para o próximo
+
+        # Delay pequeno para evitar sobrecarga (1 segundo entre produtos)
+        time.sleep(1)
+
+    df = pd.DataFrame(produtos)
+
+    # Ajusta o índice pra começar em 1
+    df.index = range(1, len(df) + 1)
+    df.index.name = "Nº"
+
+
+    return df
+    
+    pd.set_option('display.max_colwidth', None)
+    print(df)
+    
+# Exemplo de uso
+if __name__ == "__main__":
+    termo = input("Digite o produto para buscar: ")
+    limite = int(input("Digite o limite de produtos (padrão 10): ") or 10)
+    resultado = buscar_produtos(termo, limite=limite,)
     if not resultado.empty:
-        st.success(f"{len(resultado)} produtos encontrados!")
-        st.dataframe(resultado, use_container_width=True)
-
-        # Opção para exportar CSV
-        csv = resultado.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 Baixar CSV", csv, file_name=f"{termo}.csv", mime="text/csv")
+        print(resultado)
     else:
-        st.warning("Nenhum produto encontrado ou erro na busca.")
-else:
-    st.info("Digite um termo e clique em Buscar para iniciar.")
+        print("Nenhum produto encontrado ou erro na busca.")
